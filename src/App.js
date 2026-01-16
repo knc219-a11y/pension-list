@@ -1,3 +1,4 @@
+/* global __firebase_config, __app_id, __initial_auth_token */
 import React, { useState, useEffect } from 'react';
 import { initializeApp } from 'firebase/app';
 import { 
@@ -15,6 +16,7 @@ import {
 let firebaseConfig;
 let rawAppId;
 
+// eslint-disable-next-line no-restricted-globals
 if (typeof __firebase_config !== 'undefined') {
   // Canvas 미리보기 환경
   firebaseConfig = JSON.parse(__firebase_config);
@@ -44,7 +46,7 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 
 // --- Constants & Data ---
-// [안전장치 2] 아이콘 렌더링 방식 변경 (에러 원인 해결)
+// [안전장치 2] 아이콘 렌더링 방식 변경
 const ClipboardIcon = ({ size }) => (
   <div style={{ width: size, height: size }} className="flex items-center justify-center text-base">📋</div>
 );
@@ -115,18 +117,15 @@ export default function App() {
   }, [isJoined]);
 
   // --- Firestore Sync ---
-  // [안전장치 3] 데이터베이스 경로 자동 관리 함수
   const getCollectionRef = () => {
+      // eslint-disable-next-line no-restricted-globals
       const isCanvas = typeof __firebase_config !== 'undefined';
-      // 방 이름에도 특수문자가 들어오면 자동 치환
       const safeRoomCode = roomCode.replace(/\//g, '_');
       const safeCollectionName = `pension_list_${safeRoomCode}`;
       
       if (isCanvas) {
-          // Canvas 내부 경로
           return collection(db, 'artifacts', appId, 'public', 'data', safeCollectionName);
       } else {
-          // 배포 환경 경로
           return collection(db, safeCollectionName);
       }
   };
@@ -310,7 +309,6 @@ export default function App() {
         <div className="px-4 py-4 overflow-x-auto whitespace-nowrap scrollbar-hide bg-white/95 backdrop-blur-sm border-b sticky top-[150px] z-10">
           <div className="flex space-x-2">
             {categories.map(cat => {
-              // [안전장치 4] 여기서 컴포넌트로 변환하여 그리기
               const IconComponent = cat.icon;
               return (
                 <button key={cat.id} onClick={() => setActiveCategory(cat.id)} className={`px-4 py-2 rounded-full text-sm font-medium transition-all transform active:scale-95 flex items-center gap-2 ${activeCategory === cat.id ? 'bg-teal-600 text-white shadow-md shadow-teal-200' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>

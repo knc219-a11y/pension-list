@@ -3,39 +3,59 @@ import { initializeApp } from 'firebase/app';
 import { 
   getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, writeBatch 
 } from 'firebase/firestore';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 import { 
   Check, Trash2, Plus, RotateCcw, Tent, 
   Utensils, Carrot, Beer, Cookie, Package, LogOut, Users, Share2
 } from 'lucide-react';
 
 // ------------------------------------------------------------------
-// [중요] Firebase 콘솔에서 발급받은 본인의 키로 교체하세요.
+// [설정 영역]
 // ------------------------------------------------------------------
-const firebaseConfig = {
-  apiKey: "AIzaSyDmeYtrCnQc_jCvLC7coYF3tkKN2vRRqwA",
-  authDomain: "nckim-toechon-shopping-check.firebaseapp.com",
-  projectId: "nckim-toechon-shopping-check",
-  storageBucket: "nckim-toechon-shopping-check.firebasestorage.app",
-  messagingSenderId: "343301946421",
-  appId: "1:343301946421:web:b370a97d2e92a4d9c1857c",
-  measurementId: "G-2N1RZTZ92B"
-};
+let firebaseConfig;
+let rawAppId;
 
-// 앱 초기화
+if (typeof __firebase_config !== 'undefined') {
+  // Canvas 미리보기 환경
+  firebaseConfig = JSON.parse(__firebase_config);
+  rawAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+} else {
+  // --------------------------------------------------------------
+  // [중요] 배포용 키 설정 (Firebase 콘솔에서 복사해오세요!)
+  // --------------------------------------------------------------
+  firebaseConfig = {
+    apiKey: "AIzaSyDmeYtrCnQc_jCvLC7coYF3tkKN2vRRqwA",
+    authDomain: "nckim-toechon-shopping-check.firebaseapp.com",
+    projectId: "nckim-toechon-shopping-check",
+    storageBucket: "nckim-toechon-shopping-check.firebasestorage.app",
+    messagingSenderId: "343301946421",
+    appId: "1:343301946421:web:b370a97d2e92a4d9c1857c",
+    measurementId: "G-2N1RZTZ92B"
+  };
+
+  rawAppId = "pension-app-v1";
+}
+
+// [안전장치 1] ID에 특수문자(/)가 있으면 에러나므로 언더바(_)로 자동 교체
+const appId = rawAppId.replace(/\//g, '_');
+
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = "pension-app-v1"; // 원하는 앱 ID 문자열
 
 // --- Constants & Data ---
+// [안전장치 2] 아이콘 렌더링 방식 변경 (에러 원인 해결)
+const ClipboardIcon = ({ size }) => (
+  <div style={{ width: size, height: size }} className="flex items-center justify-center text-base">📋</div>
+);
+
 const categories = [
-  { id: 'all', name: '전체', icon: <div className="w-5 h-5 flex items-center justify-center">📋</div> },
-  { id: 'meat', name: '고기/구이', icon: <Utensils size={18} /> },
-  { id: 'veg', name: '채소/과일', icon: <Carrot size={18} /> },
-  { id: 'drink', name: '술/음료', icon: <Beer size={18} /> },
-  { id: 'snack', name: '간식/라면', icon: <Cookie size={18} /> },
-  { id: 'etc', name: '기타/일회용', icon: <Package size={18} /> },
+  { id: 'all', name: '전체', icon: ClipboardIcon },
+  { id: 'meat', name: '고기/구이', icon: Utensils },
+  { id: 'veg', name: '채소/과일', icon: Carrot },
+  { id: 'drink', name: '술/음료', icon: Beer },
+  { id: 'snack', name: '간식/라면', icon: Cookie },
+  { id: 'etc', name: '기타/일회용', icon: Package },
 ];
 
 const defaultItems = [
@@ -71,10 +91,13 @@ export default function App() {
 
   // --- Auth Setup ---
   useEffect(() => {
-    // 외부 배포용: 단순 익명 로그인 사용
     const initAuth = async () => {
       try {
-        await signInAnonymously(auth);
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
       } catch (error) {
         console.error("Auth failed", error);
       }
@@ -89,19 +112,31 @@ export default function App() {
       }
     });
     return () => unsubscribe();
-  }, [isJoined]); // 의존성 배열 수정
+  }, [isJoined]);
 
   // --- Firestore Sync ---
+  // [안전장치 3] 데이터베이스 경로 자동 관리 함수
+  const getCollectionRef = () => {
+      const isCanvas = typeof __firebase_config !== 'undefined';
+      // 방 이름에도 특수문자가 들어오면 자동 치환
+      const safeRoomCode = roomCode.replace(/\//g, '_');
+      const safeCollectionName = `pension_list_${safeRoomCode}`;
+      
+      if (isCanvas) {
+          // Canvas 내부 경로
+          return collection(db, 'artifacts', appId, 'public', 'data', safeCollectionName);
+      } else {
+          // 배포 환경 경로
+          return collection(db, safeCollectionName);
+      }
+  };
+
   useEffect(() => {
     if (!user || !isJoined || !roomCode) return;
 
     setLoading(true);
-    // 외부 배포용 경로: artifacts 경로 대신 일반 최상위 컬렉션 사용 권장
-    // 여기서는 'pension_lists'라는 컬렉션 아래에 문서 ID로 roomCode를 사용하고,
-    // 그 하위 컬렉션 'items'를 사용하는 구조로 변경 가능하지만,
-    // 기존 로직 유지를 위해 'pension_list_{roomCode}' 컬렉션 사용
-    const safeCollectionName = `pension_list_${roomCode}`;
-    const q = query(collection(db, safeCollectionName));
+    const collectionRef = getCollectionRef();
+    const q = query(collectionRef);
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const fetchedItems = snapshot.docs.map(doc => ({
@@ -110,7 +145,7 @@ export default function App() {
       }));
 
       if (snapshot.empty && !initializing) {
-        populateDefaults(safeCollectionName);
+        populateDefaults(collectionRef);
       } else {
         fetchedItems.sort((a, b) => {
             if (a.checked === b.checked) return a.created - b.created;
@@ -129,10 +164,10 @@ export default function App() {
   }, [user, isJoined, roomCode]);
 
   // --- Actions ---
-  const populateDefaults = async (collectionName) => {
+  const populateDefaults = async (colRef) => {
     const batch = writeBatch(db);
     defaultItems.forEach(item => {
-      const docRef = doc(collection(db, collectionName));
+      const docRef = doc(colRef);
       batch.set(docRef, { ...item, created: Date.now() });
     });
     await batch.commit();
@@ -162,9 +197,9 @@ export default function App() {
     e.preventDefault();
     if (!newItemText.trim()) return;
     const categoryToUse = activeCategory === 'all' ? 'etc' : activeCategory;
-    const safeCollectionName = `pension_list_${roomCode}`;
+    
     try {
-      await addDoc(collection(db, safeCollectionName), {
+      await addDoc(getCollectionRef(), {
         text: newItemText,
         category: categoryToUse,
         checked: false,
@@ -177,8 +212,8 @@ export default function App() {
   };
 
   const handleToggle = async (id, currentStatus) => {
-    const safeCollectionName = `pension_list_${roomCode}`;
-    const docRef = doc(db, safeCollectionName, id);
+    const colRef = getCollectionRef();
+    const docRef = doc(colRef, id);
     try {
       await updateDoc(docRef, { checked: !currentStatus });
     } catch (err) { console.error(err); }
@@ -186,19 +221,19 @@ export default function App() {
 
   const handleDelete = async (id) => {
     if (!window.confirm('정말 삭제할까요?')) return;
-    const safeCollectionName = `pension_list_${roomCode}`;
+    const colRef = getCollectionRef();
     try {
-      await deleteDoc(doc(db, safeCollectionName, id));
+      await deleteDoc(doc(colRef, id));
     } catch (err) { console.error(err); }
   };
 
   const handleReset = async () => {
     if (!window.confirm('초기화할까요?')) return;
-    const safeCollectionName = `pension_list_${roomCode}`;
+    const colRef = getCollectionRef();
     const batch = writeBatch(db);
-    items.forEach(item => batch.delete(doc(db, safeCollectionName, item.id)));
+    items.forEach(item => batch.delete(doc(colRef, item.id)));
     defaultItems.forEach(item => {
-        const docRef = doc(collection(db, safeCollectionName));
+        const docRef = doc(colRef);
         batch.set(docRef, { ...item, created: Date.now() });
     });
     await batch.commit();
@@ -274,9 +309,16 @@ export default function App() {
 
         <div className="px-4 py-4 overflow-x-auto whitespace-nowrap scrollbar-hide bg-white/95 backdrop-blur-sm border-b sticky top-[150px] z-10">
           <div className="flex space-x-2">
-            {categories.map(cat => (
-              <button key={cat.id} onClick={() => setActiveCategory(cat.id)} className={`px-4 py-2 rounded-full text-sm font-medium transition-all transform active:scale-95 flex items-center gap-2 ${activeCategory === cat.id ? 'bg-teal-600 text-white shadow-md shadow-teal-200' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>{cat.icon}{cat.name}</button>
-            ))}
+            {categories.map(cat => {
+              // [안전장치 4] 여기서 컴포넌트로 변환하여 그리기
+              const IconComponent = cat.icon;
+              return (
+                <button key={cat.id} onClick={() => setActiveCategory(cat.id)} className={`px-4 py-2 rounded-full text-sm font-medium transition-all transform active:scale-95 flex items-center gap-2 ${activeCategory === cat.id ? 'bg-teal-600 text-white shadow-md shadow-teal-200' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
+                  <IconComponent size={18} />
+                  {cat.name}
+                </button>
+              );
+            })}
           </div>
         </div>
 
